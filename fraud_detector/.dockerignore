@@ -1,0 +1,84 @@
+# ---- Git ----
+.git
+.gitignore
+.gitattributes
+
+# ---- Python: окружения и артефакты ----
+.venv
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ---- Кэши инструментов ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ---- Секреты и окружение ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+credentials.json
+
+# ---- Логи и данные ----
+logs/
+*.log
+data/
+train_data/
+tmp/
+temp/
+
+# ---- IDE / редакторы ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Docker ----
+Dockerfile
+Dockerfile.*
+docker-compose.yml
+docker-compose.*.yml
+.dockerignore
+
+# ---- CI ----
+.github/
+.gitlab-ci.yml
+.circleci/
+.travis.yml
+
+# ---- Документация ----
+README.md
+README.*
+docs/
+LICENSE
+CHANGELOG.md
+CONTRIBUTING.md
+
+# ---- Тесты (если не нужны в образе) ----
+tests/
+test/

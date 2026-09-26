@@ -80,6 +80,9 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       KAFKA_TRANSACTIONS_TOPIC: "transactions"
       KAFKA_SCORING_TOPIC: "scoring"
+    volumes:
+      # Нужны файлы: train_data/train.csv
+      - ./fraud_detector/train_data:/app/train_data
     depends_on:
       - kafka
       - kafka-setup
