@@ -1,44 +1,109 @@
+# ==========================================================================
+# ЯКОРЯ
+# ==========================================================================
+x-kafka-consumer-env: &kafka-consumer-env
+  KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_BROKERS}"
+  KAFKA_BROKERS: "${KAFKA_BROKERS}"
+
+# Общий блок environment для топика transactions.
+x-transactions-topic-env: &transactions-topic-env
+  KAFKA_TRANSACTIONS_TOPIC: "${TRANSACTIONS_TOPIC}"
+  KAFKA_TOPIC: "${TRANSACTIONS_TOPIC}"
+
+# Ограничение логов, чтобы json-логи не разрослись на диске.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+
+# ==========================================================================
+# Сервисы
+# ==========================================================================
+
 services:
-  # Zookeeper (обязательный для Kafka)
+
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.3.0
+    image: "${ZOOKEEPER_IMAGE}"
     networks:
       - ml-scorer
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "2181:2181"
+      - "${ZOOKEEPER_HOST_PORT}:2181"
+    logging: *logging
 
-  # Сервис Kafka
   kafka:
-    image: confluentinc/cp-kafka:7.3.0
+    image: "${KAFKA_IMAGE}"
     depends_on:
       - zookeeper
     networks:
       - ml-scorer
     ports:
-      - "9095:9095"
+      - "${KAFKA_HOST_PORT}:9092"
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9095
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ZOOKEEPER_CONNECT: "${ZOOKEEPER_CONNECT}"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://${KAFKA_BROKERS},PLAINTEXT_HOST://${KAFKA_HOST_BROKERS}"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"  # Отключаем автосоздание топиков
     healthcheck:
-      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9095", "--list"]
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 5s
       timeout: 10s
       retries: 10
+    logging: *logging
+
+  db:
+    image: "${POSTGRES_IMAGE}"
+    restart: unless-stopped
+    # Пароль приходит отсюда и ТОЛЬКО отсюда.
+    # Секрет задаётся в env_file сразу под именем, которое ждёт образ.
+    env_file:
+      - path: ./db/.env
+        required: false
+    networks:
+      - ml-scorer
+    environment:
+      # Имя пользователя и имя базы — не секреты, они в корневом .env,
+      # оттуда же берётся healthcheck.
+      POSTGRES_USER: "${PG_USER}"
+      POSTGRES_DB: "${PG_DB}"
+      TZ: Europe/Moscow
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+      - "-c"
+      - "work_mem=8MB"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "log_min_duration_statement=500"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *logging
 
   # Сервис для создания топиков при старте
   kafka-setup:
-    image: confluentinc/cp-kafka:7.3.0
+    image: "${KAFKA_IMAGE}"
     depends_on:
       kafka:
-        condition: service_healthy  # Ждем пока Kafka станет здоровой
+        condition: service_healthy
     networks:
       - ml-scorer
     restart: on-failure
@@ -46,42 +111,43 @@ services:
     command: |
       "
       echo 'Ожидание готовности Kafka...'
-      while ! kafka-topics --bootstrap-server kafka:9092 --list; do
+      while ! kafka-topics --bootstrap-server ${KAFKA_BROKERS} --list; do
         sleep 1
       done
 
       echo 'Создание топиков...'
-      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic transactions --partitions 3 --replication-factor 1 --config retention.ms=604800000
-      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic scoring --partitions 3 --replication-factor 1 --config retention.ms=604800000
+      kafka-topics --bootstrap-server ${KAFKA_BROKERS} --create --if-not-exists --topic ${TRANSACTIONS_TOPIC} --partitions 3 --replication-factor 1 --config retention.ms=604800000
+      kafka-topics --bootstrap-server ${KAFKA_BROKERS} --create --if-not-exists --topic ${SCORING_TOPIC} --partitions 3 --replication-factor 1 --config retention.ms=604800000
 
       echo 'Топики успешно созданы:'
-      kafka-topics --bootstrap-server kafka:9092 --list
+      kafka-topics --bootstrap-server ${KAFKA_BROKERS} --list
       "
-  
-  # Сервис для удобного просмотра топиков и настройки kafka
+
   kafka-ui:
-    image: provectuslabs/kafka-ui:latest
+    image: "${KAFKA_UI_IMAGE}"
     depends_on:
       - kafka
     networks:
       - ml-scorer
     ports:
-      - "8080:8080"
+      - "${KAFKA_UI_PORT}:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "${KAFKA_BROKERS}"
+      KAFKA_CLUSTERS_0_ZOOKEEPER: "${ZOOKEEPER_CONNECT}"
+    logging: *logging
 
   fraud_detector:
     build: ./fraud_detector
     networks:
       - ml-scorer
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
-      KAFKA_TRANSACTIONS_TOPIC: "transactions"
-      KAFKA_SCORING_TOPIC: "scoring"
+      <<: [*kafka-consumer-env, *transactions-topic-env]
+      KAFKA_SCORING_TOPIC: "${SCORING_TOPIC}"
+    env_file:
+      - path: ./fraud_detector/.env
+        required: false
     volumes:
-      # Нужны файлы: train_data/train.csv
       - ./fraud_detector/train_data:/app/train_data
     depends_on:
       - kafka
@@ -92,14 +158,20 @@ services:
     networks:
       - ml-scorer
     environment:
-      KAFKA_BROKERS: "kafka:9092"  # Используем внутренний адрес Kafka
-      KAFKA_TOPIC: "transactions"
+      <<: [*kafka-consumer-env, *transactions-topic-env]
+    env_file:
+      - path: ./interface/.env
+        required: false
     depends_on:
       - kafka
     ports:
-      - "8501:8501"
+      - "${INTERFACE_PORT}:8501"
+    logging: *logging
 
 networks:
   ml-scorer:
     name: ml-scorer
     driver: bridge
+
+volumes:
+  pgdata:
