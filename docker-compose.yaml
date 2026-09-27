@@ -1,6 +1,6 @@
-# ==========================================================================
+# ===
 # ЯКОРЯ
-# ==========================================================================
+# ===
 x-kafka-consumer-env: &kafka-consumer-env
   KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_BROKERS}"
   KAFKA_BROKERS: "${KAFKA_BROKERS}"
@@ -8,7 +8,6 @@ x-kafka-consumer-env: &kafka-consumer-env
 # Общий блок environment для топика transactions.
 x-transactions-topic-env: &transactions-topic-env
   KAFKA_TRANSACTIONS_TOPIC: "${TRANSACTIONS_TOPIC}"
-  KAFKA_TOPIC: "${TRANSACTIONS_TOPIC}"
 
 # Ограничение логов, чтобы json-логи не разрослись на диске.
 x-logging: &logging
@@ -16,9 +15,9 @@ x-logging: &logging
   options: { max-size: "10m", max-file: "3" }
 
 
-# ==========================================================================
+# ===
 # Сервисы
-# ==========================================================================
+# ===
 
 services:
 
@@ -58,16 +57,10 @@ services:
   db:
     image: "${POSTGRES_IMAGE}"
     restart: unless-stopped
-    # Пароль приходит отсюда и ТОЛЬКО отсюда.
-    # Секрет задаётся в env_file сразу под именем, которое ждёт образ.
-    env_file:
-      - path: ./db/.env
-        required: false
     networks:
       - ml-scorer
     environment:
-      # Имя пользователя и имя базы — не секреты, они в корневом .env,
-      # оттуда же берётся healthcheck.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
       POSTGRES_USER: "${PG_USER}"
       POSTGRES_DB: "${PG_DB}"
       TZ: Europe/Moscow
@@ -144,14 +137,43 @@ services:
     environment:
       <<: [*kafka-consumer-env, *transactions-topic-env]
       KAFKA_SCORING_TOPIC: "${SCORING_TOPIC}"
-    env_file:
-      - path: ./fraud_detector/.env
-        required: false
+      SCORER_GROUP_ID: "${SCORER_GROUP_ID}"
     volumes:
       - ./fraud_detector/train_data:/app/train_data
     depends_on:
-      - kafka
-      - kafka-setup
+      kafka-setup:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+
+  postgres-logger:
+    build: ./postgres-logger
+    networks:
+      - ml-scorer
+    env_file:
+      - path: ./postgres-logger/.env
+        required: false
+    environment:
+      <<: *kafka-consumer-env
+      KAFKA_SCORING_TOPIC: "${SCORING_TOPIC}"
+      WRITER_BATCH_SIZE: "${WRITER_BATCH_SIZE}"
+      WRITER_BATCH_TIMEOUT_S: "${WRITER_BATCH_TIMEOUT_S}"
+      WRITER_GROUP_ID: "${WRITER_GROUP_ID}"
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "${PG_PORT}"
+      POSTGRES_USER: "${PG_USER}"
+      POSTGRES_DB: "${PG_DB}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    depends_on:
+      kafka-setup:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      
+    restart: unless-stopped
+    logging: *logging
 
   interface:
     build: ./interface
@@ -159,11 +181,14 @@ services:
       - ml-scorer
     environment:
       <<: [*kafka-consumer-env, *transactions-topic-env]
-    env_file:
-      - path: ./interface/.env
-        required: false
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "${PG_PORT}"
+      POSTGRES_USER: "${PG_USER}"
+      POSTGRES_DB: "${PG_DB}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     ports:
       - "${INTERFACE_PORT}:8501"
     logging: *logging

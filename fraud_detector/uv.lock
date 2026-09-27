@@ -139,7 +139,7 @@ requires-dist = [
     { name = "kiwisolver", specifier = "==1.4.8" },
     { name = "matplotlib", specifier = "==3.10.3" },
     { name = "narwhals", specifier = "==1.40.0" },
-    { name = "numpy", specifier = "==2.2.6" },
+    { name = "numpy", specifier = ">=2.1" },
     { name = "packaging", specifier = "==25.0" },
     { name = "pandas", specifier = "==2.2.3" },
     { name = "pillow", specifier = "==11.2.1" },

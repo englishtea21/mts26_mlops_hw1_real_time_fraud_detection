@@ -1,16 +1,14 @@
+import json
+import logging
 import os
 import sys
+
 import pandas as pd
-import time
-import logging
-import json
-from datetime import datetime
+from confluent_kafka import Consumer, Producer
 
-from confluent_kafka import Consumer, Producer, KafkaError
-
-sys.path.append(os.path.abspath("./src"))
-from preprocessing import load_train_data, run_preproc
-from scorer import make_pred
+# sys.path.append(os.path.abspath("./src"))
+from src.preprocessing import load_train_data, run_preproc
+from src.scorer import make_pred
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +40,8 @@ class ProcessingService:
         self.train = load_train_data()
 
     def process_messages(self):
-        while True:
+        running = True
+        while running:
             msg = self.consumer.poll(1.0)
             if msg is None:
                 continue
@@ -71,6 +70,7 @@ class ProcessingService:
                 self.producer.flush()
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
+        # self.producer.clos
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+[project]
+name = "postgres-logger"
+version = "0.1.0"
+description = "Kafka scores topic -> PostgreSQL writer"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "confluent-kafka==2.10.0",
+    "psycopg[binary]>=3.1,<4",
+]

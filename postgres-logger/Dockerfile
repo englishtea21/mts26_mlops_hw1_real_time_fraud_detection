@@ -22,14 +22,10 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-RUN mkdir -p /app/logs && \
-    touch /app/logs/service.log && \
-    chmod 755 /app/logs
-
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app /app
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 
-CMD ["python", "./app.py"]
+CMD ["python", "app.py"]
