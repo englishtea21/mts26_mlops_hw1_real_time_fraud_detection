@@ -87,5 +87,5 @@ docker compose logs -f postgres-logger interface kafka
 ## Использование
 
 1. Загрузите CSV (`test.csv` формата соревнования) через Streamlit UI (localhost:8501, Вкладка "📤 Отправка данных").
-2. `fraud_detector` пишет в топик `scoring` записи вида `{"transaction_id": "...", "score": 0.995, "fraud_flag": 1}`.
+2. `fraud_detector` пишет в топик `scoring` записи вида `{"transaction_id": "...", "score": 0.995, "fraud_flag": 1}`. Для preprocessing использует train_data/train.csv (маунтит как volume в контейнер)
 3. `postgres-logger` складывает их в таблицу `scores` — результат виден в UI (localhost:8501, Вкладка "📊 Результаты") и в `kafka-ui`.

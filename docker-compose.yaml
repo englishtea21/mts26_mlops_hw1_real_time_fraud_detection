@@ -189,6 +189,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      db:
+        condition: service_healthy
     ports:
       - "${INTERFACE_PORT}:8501"
     logging: *logging
