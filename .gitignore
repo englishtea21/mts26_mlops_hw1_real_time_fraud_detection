@@ -3,3 +3,4 @@
 *.csv
 *.pyc
 __pycache__/
+.ruff-cache/

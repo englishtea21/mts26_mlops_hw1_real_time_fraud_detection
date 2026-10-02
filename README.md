@@ -1,110 +1,91 @@
-# Real-Time Fraud Detection System
+# Real-Time Fraud Detection
 
-DISCLAIMER
+Система скоринга мошеннических транзакций в реальном времени: поток `CSV → Kafka → ML-модель → Kafka → PostgreSQL`, с UI для отправки транзакций и просмотра результатов.
 
-Сервис подготовлен в демонстрационных целях для студентов курса МТС ШАД 2025 в рамках занятий по MLOps. Датасеты предоставлены в рамках соревнования https://www.kaggle.com/competitions/teta-ml-1-2025
+## Сервисы
 
-Система для обнаружения мошеннических транзакций в реальном времени с использованием ML-модели и Kafka для потоковой обработки данных.
+| Сервис | Папка | Что делает |
+|---|---|---|
+| `interface` | `./interface/` | Streamlit UI: загрузка CSV с транзакциями, отправка по одному JSON-сообщению в топик `transactions`, просмотр результатов скоринга из PostgreSQL |
+| `fraud_detector` | `./fraud_detector/` (`app.py`, `src/preprocessing.py`, `src/scorer.py`) | Kafka consumer топика `transactions` → препроцессинг (время, гео-расстояние, категориальные признаки) → CatBoost-модель (`models/my_catboost.cbm`, порог 0.98) → Kafka producer в топик `scoring` |
+| `postgres-logger` | `./postgres-logger/` (`app.py`) | Kafka consumer топика `scoring` → батчевая запись в PostgreSQL, таблица `scores`. At-least-once: коммит оффсетов только после записи, `ON CONFLICT DO NOTHING` по `transaction_id` |
+| `db` | `./db/init/01_scores.sql` | PostgreSQL, схема витрины `scores (transaction_id (Primary Key), score, fraud_flag, created_at)` |
+| `kafka`, `zookeeper`, `kafka-setup`, `kafka-ui` | `docker-compose.yaml` (образы заданы в `.env`) | Инфраструктура: брокер Kafka, автосоздание топиков `transactions` / `scoring` (3 партиции, replication 1), веб-мониторинг Kafka |
 
-## 🏗️ Архитектура
+Поток данных:
 
-Компоненты системы:
-1. **`interface`** (Streamlit UI):
-   
-   Создан для удобной симуляции потоковых данных с транзакциями. Реальный продукт использовал бы прямой поток данных из других систем.
-    - Имитирует отправку транзакций в Kafka через CSV-файлы.
-    - Генерирует уникальные ID для транзакций.
-    - Загружает транзакции отдельными сообщениями формата JSON в топик kafka `transactions`.
-    
+```
+interface → [transactions] → fraud_detector → [scoring] → postgres-logger → db (scores)
+                                                    ↘ kafka-ui (мониторинг)
+```
 
-2. **`fraud_detector`** (ML Service):
-   - Загружает предобученную модель CatBoost (`my_catboost.cbm`).
-   - Выполняет препроцессинг данных:
-     - Извлечение временных признаков
-     - Гео-расстояния
-     - Кодирование категориальных переменных
-   - Производит скоринг с порогом 0.98.
-   - Выгружает результат скоринга в топик kafka `scoring`
+## Зависимости: uv в каждом сервисе
 
-3. **Kafka Infrastructure**:
-   - Zookeeper + Kafka брокер
-   - `kafka-setup`: автоматически создает топики `transactions` и `scoring`
-   - Kafka UI: веб-интерфейс для мониторинга сообщений (порт 8080)
+Каждый Python-сервис (`fraud_detector`, `interface`, `postgres-logger`) — независимый uv-проект со **своими** `pyproject.toml` и `uv.lock`:
 
-## 🚀 Быстрый старт
+```
+fraud_detector/pyproject.toml + fraud_detector/uv.lock
+interface/pyproject.toml      + interface/uv.lock
+postgres-logger/pyproject.toml + postgres-logger/uv.lock
+```
 
-### Требования
-- Docker 20.10+
-- Docker Compose 2.0+
+Общего requirements.txt в корне нет — корневой `pyproject.toml` содержит только настройки `ruff`/`mypy`.
 
-### Запуск
+Установка в Docker (одинаковый `Dockerfile` во всех трех сервисах, multi-stage):
+
+1. В `builder`-стадии копируется `uv` из `ghcr.io/astral-sh/uv:latest`;
+2. `uv sync --frozen --no-install-project --no-dev` по собственным `pyproject.toml` + `uv.lock` (репродуцируемая установка);
+3. `.venv` копируется в финальный `python:3.13-slim` образ.
+
+Локальная разработка одного сервиса:
+
 ```bash
-git clone https://github.com/your-repo/fraud-detection-system.git
-cd fraud-detection-system
-
-# Сборка и запуск всех сервисов
-docker-compose up --build
-```
-После запуска:
-- **Streamlit UI**: http://localhost:8501
-- **Kafka UI**: http://localhost:8080
-- **Логи сервисов**: 
-  ```bash
-  docker-compose logs <service_name>  # Например: fraud_detector, kafka, interface
-
-## 🛠️ Использование
-
-### 1. Загрузка данных:
-
- - Загрузите CSV через интерфейс Streamlit. Для тестирования работы проекта используется файл формата `test.csv` из соревнования https://www.kaggle.com/competitions/teta-ml-1-2025
- - Пример структуры данных:
-    ```csv
-    transaction_time,amount,lat,lon,merchant_lat,merchant_lon,gender,...
-    2023-01-01 12:30:00,150.50,40.7128,-74.0060,40.7580,-73.9855,M,...
-    ```
- - Для первых тестов рекомендуется загружать небольшой семпл данных (до 100 транзакций) за раз, чтобы исполнение кода не заняло много времени.
-
-### 2. Мониторинг:
- - **Kafka UI**: Просматривайте сообщения в топиках transactions и scoring
- - **Логи обработки**: /app/logs/service.log внутри контейнера fraud_detector
-
-### 3. Результаты:
-
- - Скоринговые оценки пишутся в топик scoring в формате:
-    ```json
-    {
-    "score": 0.995, 
-    "fraud_flag": 1, 
-    "transaction_id": "d6b0f7a0-8e1a-4a3c-9b2d-5c8f9d1e2f3a"
-    }
-    ```
-## Структура проекта
-```
-.
-├── fraud_detector/
-│   ├── preprocessing.py    # Логика препроцессинга
-│   ├── scorer.py           # ML-модель и предсказания
-│   ├── app.py              # Kafka Consumer/Producer
-│   └── Dockerfile
-├── interface/
-│   └── app.py              # Streamlit UI
-├── docker-compose.yaml
-└── README.md
+cd fraud_detector  # или interface, postgres-logger
+uv sync --frozen
+uv run python app.py
 ```
 
-## Настройки Kafka
-```yml
-Топики:
-- transactions (входные данные)
-- scoring (результаты скоринга)
+Добавление зависимости:
 
-Репликация: 1 (для разработки)
-Партиции: 3
+```bash
+cd <service>
+uv add <package>
+# коммитим обновленные pyproject.toml + uv.lock этого сервиса
 ```
 
-*Примечание:* 
+## Запуск через Docker
 
-Для полной функциональности убедитесь, что:
-1. Модель `my_catboost.cbm` размещена в `fraud_detector/models/`
-2. Тренировочные данные находятся в `fraud_detector/train_data/`
-3. Порты 8080, 8501 и 9095 свободны на хосте
+В корне репозитория выполнить:
+
+```bash
+docker compose up --build
+```
+
+Конфигурация (порты, топики, креды БД) — в корневом `.env`, менять версии образов там же (`KAFKA_IMAGE`, `ZOOKEEPER_IMAGE`, `KAFKA_UI_IMAGE`, `POSTGRES_IMAGE`).
+
+Логи:
+
+```bash
+docker compose logs -f fraud_detector
+docker compose logs -f postgres-logger interface kafka
+```
+
+## Порты
+
+Все значения по умолчанию — из `.env` (`*_PORT` — проброс на хост):
+
+| Сервис | Хост → контейнер | Назначение |
+|---|---|---|
+| `interface` (Streamlit) | `8501` → `8501` (`INTERFACE_PORT`) | UI загрузки CSV и просмотра скоринга (`localhost:8501`) |
+| `kafka-ui` | `8080` → `8080` (`KAFKA_UI_PORT`) | Мониторинг топиков `transactions` / `scoring`: (`localhost:8080`) |
+| `kafka` | `9095` → `9092` (`KAFKA_HOST_PORT`) | Доступ к брокеру с хоста (`localhost:9095`); внутри сети compose — `kafka:9092` |
+| `zookeeper` | `2181` → `2181` (`ZOOKEEPER_HOST_PORT`) | Zookeeper |
+| `db` (PostgreSQL) | не проброшен, только внутри сети `ml-scorer` (`db:5432`, `PG_PORT`) | Таблица `scores`. Для доступа с хоста добавьте в `docker-compose.yaml` в сервис `db`: `ports: ["${PG_PORT}:5432"]` |
+| `fraud_detector`, `postgres-logger` | портов нет | фоновые Kafka-консьюмеры, смотреть через `docker compose logs` |
+
+
+## Использование
+
+1. Загрузите CSV (`test.csv` формата соревнования) через Streamlit UI (localhost:8501, Вкладка "📤 Отправка данных").
+2. `fraud_detector` пишет в топик `scoring` записи вида `{"transaction_id": "...", "score": 0.995, "fraud_flag": 1}`.
+3. `postgres-logger` складывает их в таблицу `scores` — результат виден в UI (localhost:8501, Вкладка "📊 Результаты") и в `kafka-ui`.
